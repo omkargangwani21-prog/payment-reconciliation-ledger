@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Papa from 'papaparse'
 import { ChevronDown, CircleAlert, Clock3, FileUp, Loader2, RefreshCw, Search, ShieldCheck, Sparkles } from 'lucide-react'
 import { getSupabaseClient } from '@/lib/supabase/client'
@@ -46,7 +46,17 @@ function isException(status: string) { return status.startsWith('EXCEPTION_') }
 async function callReconcile(body: Record<string, unknown>) {
   requireSupabaseConfig()
   if (!EDGE_FUNCTION_URL) throw new Error('Supabase URL is not configured.')
-  const response = await fetch(EDGE_FUNCTION_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+
+  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+  const response = await fetch(EDGE_FUNCTION_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      apikey: anonKey,
+      Authorization: `Bearer ${anonKey}`,
+    },
+    body: JSON.stringify(body),
+  })
   if (!response.ok) throw new Error(`Reconciliation action failed (${response.status})`)
   return response.json().catch(() => ({}))
 }
@@ -62,6 +72,7 @@ export function ReconciliationDashboard() {
   const [reviewer, setReviewer] = useState('')
   const [today, setToday] = useState<string | null>(null)
   const [uploads, setUploads] = useState<Record<UploadKind, { file?: string; message?: string; loading: boolean }>>({ ledger: { loading: false }, settlement: { loading: false } })
+  const uploadedKinds = useRef<Record<UploadKind, boolean>>({ ledger: false, settlement: false })
   const [open, setOpen] = useState({ auto: true, ai: true, exceptions: true })
 
   const loadRecords = useCallback(async () => {
@@ -111,9 +122,12 @@ export function ReconciliationDashboard() {
       const table = kind === 'ledger' ? 'internal_ledger' : 'settlements'
       const { error: insertError } = await getSupabaseClient().from(table).insert(rows)
       if (insertError) throw insertError
+      uploadedKinds.current[kind] = true
       setUploads((current) => ({ ...current, [kind]: { file: file.name, loading: false, message: `${rows.length} ${kind === 'ledger' ? 'ledger' : 'settlement'} rows uploaded` } }))
-      const other = kind === 'ledger' ? uploads.settlement.message : uploads.ledger.message
-      if (other) await runMatching()
+
+      if (uploadedKinds.current.ledger && uploadedKinds.current.settlement) {
+        await runMatching()
+      }
     } catch (err) {
       setUploads((current) => ({ ...current, [kind]: { file: file.name, loading: false } }))
       setError(err instanceof Error ? err.message : `Unable to upload ${kind} CSV`)
