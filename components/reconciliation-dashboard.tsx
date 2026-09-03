@@ -17,7 +17,14 @@ type MatchResult = {
   [key: string]: unknown
 }
 
-const EDGE_FUNCTION_URL = 'https://oxeukllwezkudyqnsilq.supabase.co/functions/v1/reconcile'
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL
+const EDGE_FUNCTION_URL = SUPABASE_URL ? `${SUPABASE_URL.replace(/\/$/, '')}/functions/v1/reconcile` : null
+
+function requireSupabaseConfig() {
+  if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
+    throw new Error('Supabase connection is not configured. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY.')
+  }
+}
 
 function formatAmount(value: MatchResult['amount'], currency = 'INR') {
   const number = typeof value === 'string' ? Number(value) : value ?? 0
@@ -29,6 +36,8 @@ function isAuto(status: string) { return status === 'AUTO_RECONCILED_EXACT' || s
 function isException(status: string) { return status.startsWith('EXCEPTION_') }
 
 async function callReconcile(body: Record<string, unknown>) {
+  requireSupabaseConfig()
+  if (!EDGE_FUNCTION_URL) throw new Error('Supabase URL is not configured.')
   const response = await fetch(EDGE_FUNCTION_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
   if (!response.ok) throw new Error(`Reconciliation action failed (${response.status})`)
   return response.json().catch(() => ({}))
@@ -46,6 +55,7 @@ export function ReconciliationDashboard() {
   const [open, setOpen] = useState({ auto: true, ai: true, exceptions: true })
 
   const loadRecords = useCallback(async () => {
+    requireSupabaseConfig()
     const { data, error: queryError } = await getSupabaseClient().from('match_results').select('*')
     if (queryError) throw queryError
     setRecords((data ?? []) as MatchResult[])
