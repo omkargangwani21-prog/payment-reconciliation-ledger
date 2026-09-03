@@ -66,9 +66,10 @@ export function ReconciliationDashboard() {
 
   const loadRecords = useCallback(async () => {
     requireSupabaseConfig()
-    const { data, error: queryError } = await getSupabaseClient().from('match_results').select('*')
+    const supabase = getSupabaseClient()
+    const { data, error: queryError } = await supabase.from('match_results').select('*')
     if (queryError) throw queryError
-    setRecords((data ?? []) as MatchResult[])
+    setRecords(Array.isArray(data) ? (data as MatchResult[]) : [])
   }, [])
 
   const runMatching = useCallback(async () => {
