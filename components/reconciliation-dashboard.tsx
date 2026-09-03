@@ -52,6 +52,7 @@ export function ReconciliationDashboard() {
   const [triaging, setTriaging] = useState<string | null>(null)
   const [approving, setApproving] = useState<string | null>(null)
   const [reviewer, setReviewer] = useState('')
+  const [today, setToday] = useState<string | null>(null)
   const [open, setOpen] = useState({ auto: true, ai: true, exceptions: true })
 
   const loadRecords = useCallback(async () => {
@@ -68,7 +69,10 @@ export function ReconciliationDashboard() {
     finally { setRerunning(false); setLoading(false) }
   }, [loadRecords])
 
-  useEffect(() => { void runMatching() }, [runMatching])
+  useEffect(() => {
+    setToday(new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }).toUpperCase())
+    void runMatching()
+  }, [runMatching])
 
   const filtered = useMemo(() => records.filter((record) => {
     const value = query.toLowerCase()
@@ -99,7 +103,7 @@ export function ReconciliationDashboard() {
     <header className="border-b border-border">
       <div className="mx-auto flex max-w-[1440px] items-center justify-between px-6 py-5 lg:px-10">
         <div className="flex items-center gap-3"><div className="flex h-8 w-8 items-center justify-center border border-foreground bg-foreground text-background font-mono text-xs font-bold">R/</div><div><p className="font-serif text-lg leading-none">Reconcile</p><p className="mt-1 font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground">Settlement register</p></div></div>
-        <div className="flex items-center gap-5"><span className="hidden font-mono text-[11px] text-muted-foreground sm:block">LIVE / {new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }).toUpperCase()}</span><button onClick={() => void runMatching()} disabled={rerunning} className="inline-flex items-center gap-2 border border-foreground px-3 py-2 font-mono text-[11px] uppercase tracking-wide transition-colors hover:bg-foreground hover:text-background disabled:opacity-50"><RefreshCw className={rerunning ? 'h-3.5 w-3.5 animate-spin' : 'h-3.5 w-3.5'} /> Re-run matching</button></div>
+        <div className="flex items-center gap-5"><span className="hidden font-mono text-[11px] text-muted-foreground sm:block">LIVE / {today ?? '—'}</span><button onClick={() => void runMatching()} disabled={rerunning} className="inline-flex items-center gap-2 border border-foreground px-3 py-2 font-mono text-[11px] uppercase tracking-wide transition-colors hover:bg-foreground hover:text-background disabled:opacity-50"><RefreshCw className={rerunning ? 'h-3.5 w-3.5 animate-spin' : 'h-3.5 w-3.5'} /> Re-run matching</button></div>
       </div>
     </header>
 
