@@ -1,7 +1,8 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { ChevronDown, CircleAlert, Clock3, Loader2, RefreshCw, Search, ShieldCheck, Sparkles } from 'lucide-react'
+import Papa from 'papaparse'
+import { ChevronDown, CircleAlert, Clock3, FileUp, Loader2, RefreshCw, Search, ShieldCheck, Sparkles } from 'lucide-react'
 import { getSupabaseClient } from '@/lib/supabase/client'
 
 type MatchResult = {
@@ -15,6 +16,13 @@ type MatchResult = {
   ai_confidence?: number | null
   human_approved?: boolean | null
   [key: string]: unknown
+}
+
+type UploadKind = 'ledger' | 'settlement'
+
+const uploadColumns: Record<UploadKind, string[]> = {
+  ledger: ['payment_id', 'order_id', 'amount_paisa', 'fee_paisa', 'tax_on_fee_paisa', 'status', 'created_at', 'currency'],
+  settlement: ['utr', 'settlement_id', 'payment_id', 'settled_amount_paisa', 'settlement_date', 'batch_id'],
 }
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL
@@ -53,6 +61,7 @@ export function ReconciliationDashboard() {
   const [approving, setApproving] = useState<string | null>(null)
   const [reviewer, setReviewer] = useState('')
   const [today, setToday] = useState<string | null>(null)
+  const [uploads, setUploads] = useState<Record<UploadKind, { file?: string; message?: string; loading: boolean }>>({ ledger: { loading: false }, settlement: { loading: false } })
   const [open, setOpen] = useState({ auto: true, ai: true, exceptions: true })
 
   const loadRecords = useCallback(async () => {
@@ -84,6 +93,32 @@ export function ReconciliationDashboard() {
   const exceptionCount = records.filter((r) => isException(r.status)).length
   const matchRate = records.length ? Math.round((autoCount / records.length) * 1000) / 10 : 0
 
+  async function uploadCsv(kind: UploadKind, file: File) {
+    setUploads((current) => ({ ...current, [kind]: { file: file.name, loading: true } }))
+    setError('')
+    try {
+      const result = await new Promise<Papa.ParseResult<Record<string, string>>>((resolve, reject) => {
+        Papa.parse<Record<string, string>>(file, { header: true, skipEmptyLines: true, complete: resolve, error: reject })
+      })
+      if (result.errors.length) throw new Error(`Could not parse ${file.name}: ${result.errors[0].message}`)
+      const rows = result.data.filter((row) => Object.values(row).some(Boolean))
+      const expected = uploadColumns[kind]
+      const missing = expected.filter((column) => !result.meta.fields?.includes(column))
+      if (missing.length) throw new Error(`${file.name} is missing columns: ${missing.join(', ')}`)
+      if (!rows.length) throw new Error(`${file.name} contains no rows.`)
+      requireSupabaseConfig()
+      const table = kind === 'ledger' ? 'internal_ledger' : 'settlements'
+      const { error: insertError } = await getSupabaseClient().from(table).insert(rows)
+      if (insertError) throw insertError
+      setUploads((current) => ({ ...current, [kind]: { file: file.name, loading: false, message: `${rows.length} ${kind === 'ledger' ? 'ledger' : 'settlement'} rows uploaded` } }))
+      const other = kind === 'ledger' ? uploads.settlement.message : uploads.ledger.message
+      if (other) await runMatching()
+    } catch (err) {
+      setUploads((current) => ({ ...current, [kind]: { file: file.name, loading: false } }))
+      setError(err instanceof Error ? err.message : `Unable to upload ${kind} CSV`)
+    }
+  }
+
   async function triage(id: string) {
     setTriaging(id); setError('')
     try { const result = await callReconcile({ action: 'ai_triage', matchResultId: id }); setRecords((current) => current.map((r) => r.id === id ? { ...r, ai_reasoning: result.ai_reasoning, ai_confidence: result.ai_confidence } : r)) }
@@ -108,6 +143,10 @@ export function ReconciliationDashboard() {
     </header>
 
     <div className="mx-auto max-w-[1440px] px-6 py-8 lg:px-10 lg:py-12">
+      <section className="mb-10 border-b border-border pb-8">
+        <div className="mb-4 flex items-baseline justify-between gap-4"><div><p className="font-mono text-[11px] uppercase tracking-[0.2em] text-muted-foreground">Input register</p><h2 className="mt-2 font-serif text-3xl">Upload New Batch</h2></div><p className="hidden font-mono text-[10px] uppercase tracking-wider text-muted-foreground sm:block">CSV / source files</p></div>
+        <div className="grid gap-4 md:grid-cols-2"><UploadDropZone kind="ledger" label="Ledger CSV" upload={uploadCsv} state={uploads.ledger} /><UploadDropZone kind="settlement" label="Settlement CSV" upload={uploadCsv} state={uploads.settlement} /></div>
+      </section>
       <section className="grid gap-8 border-b border-border pb-10 lg:grid-cols-[1.15fr_2fr] lg:gap-16">
         <div><p className="mb-5 font-mono text-[11px] uppercase tracking-[0.2em] text-muted-foreground">Daily settlement / audit view</p><h1 className="max-w-xl font-serif text-5xl leading-[0.95] tracking-tight sm:text-7xl">Payment matching,<br /><em className="text-muted-foreground">made legible.</em></h1></div>
         <div className="flex flex-col justify-end"><div className="flex items-end gap-8"><div><p className="font-mono text-[11px] uppercase tracking-wider text-muted-foreground">Match rate</p><p className="font-mono text-7xl leading-none tracking-[-0.08em] sm:text-8xl">{matchRate}<span className="text-4xl text-muted-foreground">%</span></p></div><div className="mb-1 h-16 w-px bg-border" /><div className="grid grid-cols-2 gap-x-8 gap-y-3 pb-1 sm:grid-cols-4"><Stat label="Total records" value={records.length} /><Stat label="Auto-reconciled" value={autoCount} accent="green" /><Stat label="AI review queue" value={aiCount} accent="amber" /><Stat label="Exceptions" value={exceptionCount} accent="rust" /></div></div></div>
@@ -118,6 +157,14 @@ export function ReconciliationDashboard() {
       {loading ? <div className="flex items-center gap-3 py-16 font-mono text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading settlement records…</div> : <div className="space-y-10 pt-8"><Section title="Auto-Reconciled" count={groups.auto.length} tone="green" open={open.auto} onToggle={() => setOpen((state) => ({ ...state, auto: !state.auto }))}><Table records={groups.auto} /></Section><Section title="AI Review Queue" count={groups.ai.length} tone="amber" open={open.ai} onToggle={() => setOpen((state) => ({ ...state, ai: !state.ai }))}><Table records={groups.ai} ai triaging={triaging} onTriage={triage} reviewer={reviewer} setReviewer={setReviewer} approving={approving} onApprove={approve} /></Section><Section title="Exceptions" count={groups.exceptions.length} tone="rust" open={open.exceptions} onToggle={() => setOpen((state) => ({ ...state, exceptions: !state.exceptions }))}><Table records={groups.exceptions} /></Section></div>}
     </div>
   </main>
+}
+
+function UploadDropZone({ kind, label, upload, state }: { kind: UploadKind; label: string; upload: (kind: UploadKind, file: File) => void; state: { file?: string; message?: string; loading: boolean } }) {
+  return <label className="flex min-h-32 cursor-pointer flex-col justify-between border border-dashed border-muted-foreground/50 px-4 py-4 transition-colors hover:border-foreground" onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); const file = event.dataTransfer.files[0]; if (file) upload(kind, file) }}>
+    <input type="file" accept=".csv,text/csv" className="sr-only" onChange={(event) => { const file = event.target.files?.[0]; if (file) upload(kind, file); event.currentTarget.value = '' }} />
+    <span className="flex items-center justify-between"><span className="font-mono text-[11px] uppercase tracking-wider">{label}</span><FileUp className="h-4 w-4 text-muted-foreground" /></span>
+    <span className="mt-6 space-y-1"><span className="block truncate font-mono text-xs text-muted-foreground">{state.loading ? 'Uploading…' : state.file ?? 'Drop CSV or choose file'}</span>{state.message && <span className="block font-mono text-[11px] text-green">{state.message}</span>}</span>
+  </label>
 }
 
 function Stat({ label, value, accent }: { label: string; value: number; accent?: string }) { return <div><p className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">{label}</p><p className={`mt-1 font-mono text-xl ${accent ? `text-${accent}` : ''}`}>{value}</p></div> }
