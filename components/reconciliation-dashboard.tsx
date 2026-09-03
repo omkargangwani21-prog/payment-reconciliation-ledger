@@ -1,0 +1,111 @@
+'use client'
+
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { ChevronDown, CircleAlert, Clock3, Loader2, RefreshCw, Search, ShieldCheck, Sparkles } from 'lucide-react'
+import { getSupabaseClient } from '@/lib/supabase/client'
+
+type MatchResult = {
+  id: string
+  status: string
+  payment_id?: string | null
+  utr?: string | null
+  amount?: number | string | null
+  currency?: string | null
+  ai_reasoning?: string | null
+  ai_confidence?: number | null
+  human_approved?: boolean | null
+  [key: string]: unknown
+}
+
+const EDGE_FUNCTION_URL = 'https://oxeukllwezkudyqnsilq.supabase.co/functions/v1/reconcile'
+
+function formatAmount(value: MatchResult['amount'], currency = 'INR') {
+  const number = typeof value === 'string' ? Number(value) : value ?? 0
+  const amount = Number.isFinite(number) ? number / 100 : 0
+  return new Intl.NumberFormat('en-IN', { style: 'currency', currency, maximumFractionDigits: 2 }).format(amount)
+}
+
+function isAuto(status: string) { return status === 'AUTO_RECONCILED_EXACT' || status === 'AUTO_RECONCILED_TOLERANCE' }
+function isException(status: string) { return status.startsWith('EXCEPTION_') }
+
+async function callReconcile(body: Record<string, unknown>) {
+  const response = await fetch(EDGE_FUNCTION_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+  if (!response.ok) throw new Error(`Reconciliation action failed (${response.status})`)
+  return response.json().catch(() => ({}))
+}
+
+export function ReconciliationDashboard() {
+  const [records, setRecords] = useState<MatchResult[]>([])
+  const [query, setQuery] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [rerunning, setRerunning] = useState(false)
+  const [error, setError] = useState('')
+  const [triaging, setTriaging] = useState<string | null>(null)
+  const [approving, setApproving] = useState<string | null>(null)
+  const [reviewer, setReviewer] = useState('')
+  const [open, setOpen] = useState({ auto: true, ai: true, exceptions: true })
+
+  const loadRecords = useCallback(async () => {
+    const { data, error: queryError } = await getSupabaseClient().from('match_results').select('*')
+    if (queryError) throw queryError
+    setRecords((data ?? []) as MatchResult[])
+  }, [])
+
+  const runMatching = useCallback(async () => {
+    setRerunning(true); setError('')
+    try { await callReconcile({ action: 'run_matching' }); await loadRecords() }
+    catch (err) { setError(err instanceof Error ? err.message : 'Unable to refresh reconciliation') }
+    finally { setRerunning(false); setLoading(false) }
+  }, [loadRecords])
+
+  useEffect(() => { void runMatching() }, [runMatching])
+
+  const filtered = useMemo(() => records.filter((record) => {
+    const value = query.toLowerCase()
+    return String(record.payment_id ?? '').toLowerCase().includes(value) || String(record.utr ?? '').toLowerCase().includes(value)
+  }), [records, query])
+  const groups = { auto: filtered.filter((r) => isAuto(r.status)), ai: filtered.filter((r) => r.status === 'AI_REVIEW_QUEUE'), exceptions: filtered.filter((r) => isException(r.status)) }
+  const autoCount = records.filter((r) => isAuto(r.status)).length
+  const aiCount = records.filter((r) => r.status === 'AI_REVIEW_QUEUE').length
+  const exceptionCount = records.filter((r) => isException(r.status)).length
+  const matchRate = records.length ? Math.round((autoCount / records.length) * 1000) / 10 : 0
+
+  async function triage(id: string) {
+    setTriaging(id); setError('')
+    try { const result = await callReconcile({ action: 'ai_triage', matchResultId: id }); setRecords((current) => current.map((r) => r.id === id ? { ...r, ai_reasoning: result.ai_reasoning, ai_confidence: result.ai_confidence } : r)) }
+    catch (err) { setError(err instanceof Error ? err.message : 'Unable to run AI triage') }
+    finally { setTriaging(null) }
+  }
+
+  async function approve(record: MatchResult) {
+    if (!reviewer.trim()) { setError('Enter a reviewer name before approving a record.'); return }
+    setApproving(record.id); setError('')
+    try { await callReconcile({ action: 'approve', matchResultId: record.id, approvedBy: reviewer.trim() }); setRecords((current) => current.map((r) => r.id === record.id ? { ...r, human_approved: true } : r)) }
+    catch (err) { setError(err instanceof Error ? err.message : 'Unable to approve record') }
+    finally { setApproving(null) }
+  }
+
+  return <main className="min-h-screen bg-background text-foreground">
+    <header className="border-b border-border">
+      <div className="mx-auto flex max-w-[1440px] items-center justify-between px-6 py-5 lg:px-10">
+        <div className="flex items-center gap-3"><div className="flex h-8 w-8 items-center justify-center border border-foreground bg-foreground text-background font-mono text-xs font-bold">R/</div><div><p className="font-serif text-lg leading-none">Reconcile</p><p className="mt-1 font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground">Settlement register</p></div></div>
+        <div className="flex items-center gap-5"><span className="hidden font-mono text-[11px] text-muted-foreground sm:block">LIVE / {new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }).toUpperCase()}</span><button onClick={() => void runMatching()} disabled={rerunning} className="inline-flex items-center gap-2 border border-foreground px-3 py-2 font-mono text-[11px] uppercase tracking-wide transition-colors hover:bg-foreground hover:text-background disabled:opacity-50"><RefreshCw className={rerunning ? 'h-3.5 w-3.5 animate-spin' : 'h-3.5 w-3.5'} /> Re-run matching</button></div>
+      </div>
+    </header>
+
+    <div className="mx-auto max-w-[1440px] px-6 py-8 lg:px-10 lg:py-12">
+      <section className="grid gap-8 border-b border-border pb-10 lg:grid-cols-[1.15fr_2fr] lg:gap-16">
+        <div><p className="mb-5 font-mono text-[11px] uppercase tracking-[0.2em] text-muted-foreground">Daily settlement / audit view</p><h1 className="max-w-xl font-serif text-5xl leading-[0.95] tracking-tight sm:text-7xl">Payment matching,<br /><em className="text-muted-foreground">made legible.</em></h1></div>
+        <div className="flex flex-col justify-end"><div className="flex items-end gap-8"><div><p className="font-mono text-[11px] uppercase tracking-wider text-muted-foreground">Match rate</p><p className="font-mono text-7xl leading-none tracking-[-0.08em] sm:text-8xl">{matchRate}<span className="text-4xl text-muted-foreground">%</span></p></div><div className="mb-1 h-16 w-px bg-border" /><div className="grid grid-cols-2 gap-x-8 gap-y-3 pb-1 sm:grid-cols-4"><Stat label="Total records" value={records.length} /><Stat label="Auto-reconciled" value={autoCount} accent="green" /><Stat label="AI review queue" value={aiCount} accent="amber" /><Stat label="Exceptions" value={exceptionCount} accent="rust" /></div></div></div>
+      </section>
+
+      <div className="flex flex-col gap-4 border-b border-border py-5 sm:flex-row sm:items-center sm:justify-between"><div className="relative max-w-sm flex-1"><Search className="absolute left-0 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search payment ID or UTR" className="w-full border-b border-border bg-transparent py-2 pl-7 font-mono text-sm outline-none placeholder:text-muted-foreground focus:border-foreground" /></div><p className="font-mono text-[11px] uppercase tracking-wider text-muted-foreground">{filtered.length} of {records.length} records shown</p></div>
+      {error && <div className="my-5 flex items-center gap-2 border border-rust/40 bg-rust/5 px-4 py-3 font-mono text-xs text-rust"><CircleAlert className="h-4 w-4" /> {error}</div>}
+      {loading ? <div className="flex items-center gap-3 py-16 font-mono text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading settlement records…</div> : <div className="space-y-10 pt-8"><Section title="Auto-Reconciled" count={groups.auto.length} tone="green" open={open.auto} onToggle={() => setOpen((state) => ({ ...state, auto: !state.auto }))}><Table records={groups.auto} /></Section><Section title="AI Review Queue" count={groups.ai.length} tone="amber" open={open.ai} onToggle={() => setOpen((state) => ({ ...state, ai: !state.ai }))}><Table records={groups.ai} ai triaging={triaging} onTriage={triage} reviewer={reviewer} setReviewer={setReviewer} approving={approving} onApprove={approve} /></Section><Section title="Exceptions" count={groups.exceptions.length} tone="rust" open={open.exceptions} onToggle={() => setOpen((state) => ({ ...state, exceptions: !state.exceptions }))}><Table records={groups.exceptions} /></Section></div>}
+    </div>
+  </main>
+}
+
+function Stat({ label, value, accent }: { label: string; value: number; accent?: string }) { return <div><p className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">{label}</p><p className={`mt-1 font-mono text-xl ${accent ? `text-${accent}` : ''}`}>{value}</p></div> }
+function Section({ title, count, tone, open, onToggle, children }: { title: string; count: number; tone: string; open: boolean; onToggle: () => void; children: React.ReactNode }) { return <section><button onClick={onToggle} className="flex w-full items-center justify-between border-b border-foreground pb-3 text-left"><span className="flex items-center gap-3"><span className={`h-2 w-2 bg-${tone}`} /><h2 className="font-serif text-2xl">{title}</h2><span className="font-mono text-xs text-muted-foreground">[{String(count).padStart(2, '0')}]</span></span><ChevronDown className={`h-4 w-4 transition-transform ${open ? '' : '-rotate-90'}`} /></button>{open && children}</section> }
+function Table({ records, ai, triaging, onTriage, reviewer, setReviewer, approving, onApprove }: { records: MatchResult[]; ai?: boolean; triaging?: string | null; onTriage?: (id: string) => void; reviewer?: string; setReviewer?: (value: string) => void; approving?: string | null; onApprove?: (record: MatchResult) => void }) { if (!records.length) return <div className="border-b border-border py-6 font-mono text-xs text-muted-foreground">No records in this section.</div>; return <div className="overflow-x-auto"><div className="min-w-[760px]"><div className="grid grid-cols-[1.2fr_1.2fr_0.7fr_0.8fr_1.5fr] gap-4 py-3 font-mono text-[10px] uppercase tracking-wider text-muted-foreground"><span>Payment ID</span><span>UTR</span><span>Status</span><span className="text-right">Amount</span><span className="text-right">Action / reasoning</span></div>{records.map((record) => <div key={record.id} className="grid grid-cols-[1.2fr_1.2fr_0.7fr_0.8fr_1.5fr] items-start gap-4 border-t border-border py-4 font-mono text-xs"><span className="truncate">{record.payment_id ?? '—'}</span><span className="truncate text-muted-foreground">{record.utr ?? '—'}</span><span className="text-muted-foreground">{record.status.replaceAll('_', ' ').toLowerCase()}</span><span className="text-right">{formatAmount(record.amount, record.currency ?? 'INR')}</span><div className="text-right">{ai && !record.ai_reasoning ? <button onClick={() => onTriage?.(record.id)} disabled={triaging === record.id} className="inline-flex items-center gap-1.5 border border-amber px-2 py-1 text-[10px] uppercase text-amber hover:bg-amber hover:text-background disabled:opacity-50">{triaging === record.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />} Run AI triage</button> : ai ? <div className="space-y-2 text-left"><p className="leading-relaxed text-foreground">{record.ai_reasoning}</p><p className="text-[10px] text-amber">Confidence: {record.ai_confidence != null ? `${Math.round(record.ai_confidence * 100)}%` : '—'}</p>{!record.human_approved && <label className="flex items-center justify-end gap-2 text-[10px] text-muted-foreground"><input type="checkbox" onChange={(event) => event.target.checked && onApprove?.(record)} className="accent-amber" /> Requires human approval</label>}</div> : <span className="inline-flex items-center gap-1 text-[10px] uppercase text-green"><ShieldCheck className="h-3.5 w-3.5" /> Rule matched</span>}{approving === record.id && <span className="ml-2 text-[10px] text-muted-foreground">Saving…</span>}</div></div>)}</div>{ai && <div className="flex items-center justify-end gap-2 border-t border-border pt-3"><Clock3 className="h-3.5 w-3.5 text-muted-foreground" /><input value={reviewer ?? ''} onChange={(event) => setReviewer?.(event.target.value)} placeholder="Reviewer name for approval" className="border-b border-border bg-transparent px-1 py-1 font-mono text-xs outline-none placeholder:text-muted-foreground focus:border-foreground" /></div>}</div> }

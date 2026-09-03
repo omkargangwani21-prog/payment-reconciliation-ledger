@@ -47,24 +47,27 @@
 
 :root {
   color-scheme: light;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
+  --background: #efeDE6;
+  --foreground: #161b22;
+  --card: #efeDE6;
+  --card-foreground: #161b22;
+  --popover: #efeDE6;
+  --popover-foreground: #161b22;
+  --primary: #161b22;
+  --primary-foreground: #efede6;
+  --secondary: #e3e0d8;
+  --secondary-foreground: #161b22;
+  --muted: #e3e0d8;
+  --muted-foreground: #6e716d;
+  --accent: #d7d3c9;
+  --accent-foreground: #161b22;
+  --destructive: #a94b36;
+  --border: #c9c6bd;
+  --input: #c9c6bd;
+  --ring: #161b22;
+  --green: #3d7254;
+  --amber: #a36b22;
+  --rust: #a94b36;
   --chart-1: oklch(0.87 0 0);
   --chart-2: oklch(0.556 0 0);
   --chart-3: oklch(0.439 0 0);
@@ -153,11 +156,29 @@
   }
 }
 
+@theme inline {
+  --font-sans: var(--font-inter);
+  --font-mono: var(--font-mono-ledger);
+  --font-serif: var(--font-serif-ledger);
+  --color-green: var(--green);
+  --color-amber: var(--amber);
+  --color-rust: var(--rust);
+}
+
 @layer base {
-  * {
-    @apply border-border outline-ring/50;
-  }
-  body {
-    @apply bg-background text-foreground;
+  * { @apply border-border outline-ring/50; }
+  body { @apply bg-background text-foreground; }
+}
+
+/* The register is intentionally a light paper surface, even on dark-system previews. */
+@media (prefers-color-scheme: dark) {
+  :root:not(.dark) {
+    color-scheme: light;
+    --background: #efede6;
+    --foreground: #161b22;
+    --card: #efede6;
+    --card-foreground: #161b22;
+    --muted-foreground: #6e716d;
+    --border: #c9c6bd;
   }
 }
