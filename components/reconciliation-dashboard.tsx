@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Papa from 'papaparse'
-import { ChevronDown, CircleAlert, Clock3, FileUp, Loader2, RefreshCw, Search, ShieldCheck, Sparkles } from 'lucide-react'
+import { ChevronDown, CircleAlert, CircleX, Clock3, FileUp, Loader2, RefreshCw, Search, ShieldCheck, Sparkles } from 'lucide-react'
 import { getSupabaseClient } from '@/lib/supabase/client'
 
 type MatchResult = {
@@ -36,8 +36,15 @@ function formatAmount(value: number | string | null | undefined, currency = 'INR
   return new Intl.NumberFormat('en-IN', { style: 'currency', currency, maximumFractionDigits: 2 }).format(amount)
 }
 
-function isAuto(status: string) { return status === 'AUTO_RECONCILED_EXACT' || status === 'AUTO_RECONCILED_TOLERANCE' }
-function isException(status: string) { return status.startsWith('EXCEPTION_') }
+function isAuto(record: MatchResult) {
+  return record.status === 'AUTO_RECONCILED_EXACT' || record.status === 'AUTO_RECONCILED_TOLERANCE' || (record.status === 'AI_REVIEW_QUEUE' && !!record.human_approved)
+}
+function isPendingReview(record: MatchResult) {
+  return record.status === 'AI_REVIEW_QUEUE' && !record.human_approved
+}
+function isException(record: MatchResult) {
+  return record.status.startsWith('EXCEPTION_')
+}
 
 function amountValue(record: MatchResult) {
   const raw = record.settled_paisa ?? record.expected_net_paisa ?? 0
@@ -123,13 +130,13 @@ export function ReconciliationDashboard() {
     return String(record.payment_id ?? '').toLowerCase().includes(value) || String(record.utr ?? '').toLowerCase().includes(value)
   }), [records, query])
   const groups = {
-    auto: filtered.filter((r) => isAuto(r.status)).slice().sort(byPaymentId),
-    ai: filtered.filter((r) => r.status === 'AI_REVIEW_QUEUE').slice().sort(byAmountDescending),
-    exceptions: filtered.filter((r) => isException(r.status)).slice().sort(byPaymentId),
+    auto: filtered.filter(isAuto).slice().sort(byPaymentId),
+    ai: filtered.filter(isPendingReview).slice().sort(byAmountDescending),
+    exceptions: filtered.filter(isException).slice().sort(byPaymentId),
   }
-  const autoCount = records.filter((r) => isAuto(r.status)).length
-  const aiCount = records.filter((r) => r.status === 'AI_REVIEW_QUEUE').length
-  const exceptionCount = records.filter((r) => isException(r.status)).length
+  const autoCount = records.filter(isAuto).length
+  const aiCount = records.filter(isPendingReview).length
+  const exceptionCount = records.filter(isException).length
   const matchRate = records.length ? Math.round((autoCount / records.length) * 1000) / 10 : 0
 
   async function uploadCsv(kind: UploadKind, file: File) {
@@ -174,8 +181,22 @@ export function ReconciliationDashboard() {
   async function approve(record: MatchResult) {
     if (!reviewer.trim()) { setError('Enter a reviewer name before approving a record.'); return }
     setApproving(record.id); setError('')
-    try { await callReconcile({ action: 'approve', matchResultId: record.id, approvedBy: reviewer.trim() }); setRecords((current) => current.map((r) => r.id === record.id ? { ...r, human_approved: true } : r)) }
+    try {
+      await callReconcile({ action: 'approve', matchResultId: record.id, approvedBy: reviewer.trim() })
+      await loadRecords()
+    }
     catch (err) { setError(err instanceof Error ? err.message : 'Unable to approve record') }
+    finally { setApproving(null) }
+  }
+
+  async function reject(record: MatchResult) {
+    if (!reviewer.trim()) { setError('Enter a reviewer name before rejecting a record.'); return }
+    setApproving(record.id); setError('')
+    try {
+      await callReconcile({ action: 'reject', matchResultId: record.id, approvedBy: reviewer.trim() })
+      await loadRecords()
+    }
+    catch (err) { setError(err instanceof Error ? err.message : 'Unable to reject record') }
     finally { setApproving(null) }
   }
 
@@ -199,7 +220,14 @@ export function ReconciliationDashboard() {
 
       <div className="flex flex-col gap-4 border-b border-border py-5 sm:flex-row sm:items-center sm:justify-between"><div className="relative max-w-sm flex-1"><Search className="absolute left-0 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search payment ID or UTR" className="w-full border-b border-border bg-transparent py-2 pl-7 font-mono text-sm outline-none placeholder:text-muted-foreground focus:border-foreground" /></div><p className="font-mono text-[11px] uppercase tracking-wider text-muted-foreground">{filtered.length} of {records.length} records shown</p></div>
       {error && <div className="my-5 flex items-center gap-2 border border-rust/40 bg-rust/5 px-4 py-3 font-mono text-xs text-rust"><CircleAlert className="h-4 w-4" /> {error}</div>}
-      {loading ? <div className="flex items-center gap-3 py-16 font-mono text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading settlement records…</div> : <div className="space-y-10 pt-8"><Section title="Auto-Reconciled" count={groups.auto.length} tone="green" open={open.auto} onToggle={() => setOpen((state) => ({ ...state, auto: !state.auto }))}><Table records={groups.auto} /></Section><Section title="AI Review Queue" count={groups.ai.length} tone="amber" open={open.ai} onToggle={() => setOpen((state) => ({ ...state, ai: !state.ai }))}><Table records={groups.ai} ai triaging={triaging} onTriage={triage} reviewer={reviewer} setReviewer={setReviewer} approving={approving} onApprove={approve} /></Section><Section title="Exceptions" count={groups.exceptions.length} tone="rust" open={open.exceptions} onToggle={() => setOpen((state) => ({ ...state, exceptions: !state.exceptions }))}><Table records={groups.exceptions} /></Section></div>}
+      {loading ? <div className="flex items-center gap-3 py-16 font-mono text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading settlement records…</div> : <div className="space-y-10 pt-8">
+        <Section title="Auto-Reconciled" count={groups.auto.length} tone="green" open={open.auto} onToggle={() => setOpen((state) => ({ ...state, auto: !state.auto }))}><Table records={groups.auto} /></Section>
+        <Section title="AI Review Queue" count={groups.ai.length} tone="amber" open={open.ai} onToggle={() => setOpen((state) => ({ ...state, ai: !state.ai }))}>
+          <div className="flex items-center justify-end gap-2 border-b border-border pb-3 mb-1"><Clock3 className="h-3.5 w-3.5 text-muted-foreground" /><input value={reviewer} onChange={(event) => setReviewer(event.target.value)} placeholder="Reviewer name for approval / rejection" className="border-b border-border bg-transparent px-1 py-1 font-mono text-xs outline-none placeholder:text-muted-foreground focus:border-foreground" /></div>
+          <Table records={groups.ai} ai triaging={triaging} onTriage={triage} approving={approving} onApprove={approve} onReject={reject} />
+        </Section>
+        <Section title="Exceptions" count={groups.exceptions.length} tone="rust" open={open.exceptions} onToggle={() => setOpen((state) => ({ ...state, exceptions: !state.exceptions }))}><Table records={groups.exceptions} /></Section>
+      </div>}
     </div>
   </main>
 }
@@ -214,4 +242,4 @@ function UploadDropZone({ kind, label, upload, state }: { kind: UploadKind; labe
 
 function Stat({ label, value, accent }: { label: string; value: number; accent?: string }) { return <div><p className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">{label}</p><p className={`mt-1 font-mono text-xl ${accent ? `text-${accent}` : ''}`}>{value}</p></div> }
 function Section({ title, count, tone, open, onToggle, children }: { title: string; count: number; tone: string; open: boolean; onToggle: () => void; children: React.ReactNode }) { return <section><button onClick={onToggle} className="flex w-full items-center justify-between border-b border-foreground pb-3 text-left"><span className="flex items-center gap-3"><span className={`h-2 w-2 bg-${tone}`} /><h2 className="font-serif text-2xl">{title}</h2><span className="font-mono text-xs text-muted-foreground">[{String(count).padStart(2, '0')}]</span></span><ChevronDown className={`h-4 w-4 transition-transform ${open ? '' : '-rotate-90'}`} /></button>{open && children}</section> }
-function Table({ records, ai, triaging, onTriage, reviewer, setReviewer, approving, onApprove }: { records: MatchResult[]; ai?: boolean; triaging?: string | null; onTriage?: (id: string) => void; reviewer?: string; setReviewer?: (value: string) => void; approving?: string | null; onApprove?: (record: MatchResult) => void }) { if (!records.length) return <div className="border-b border-border py-6 font-mono text-xs text-muted-foreground">No records in this section.</div>; return <div className="overflow-x-auto"><div className="min-w-[760px]"><div className="grid grid-cols-[1.2fr_1.2fr_0.7fr_0.8fr_1.5fr] gap-4 py-3 font-mono text-[10px] uppercase tracking-wider text-muted-foreground"><span>Payment ID</span><span>UTR</span><span>Status</span><span className="text-right">Amount</span><span className="text-right">Action / reasoning</span></div>{records.map((record) => <div key={record.id} className="grid grid-cols-[1.2fr_1.2fr_0.7fr_0.8fr_1.5fr] items-start gap-4 border-t border-border py-4 font-mono text-xs"><span className="truncate">{record.payment_id ?? '—'}</span><span className="truncate text-muted-foreground">{record.utr ?? '—'}</span><span className="text-muted-foreground">{record.status.replaceAll('_', ' ').toLowerCase()}</span><span className="text-right">{formatAmount(record.settled_paisa ?? record.expected_net_paisa, record.currency ?? 'INR')}</span><div className="text-right">{ai && !record.ai_reasoning ? <button onClick={() => onTriage?.(record.id)} disabled={triaging === record.id} className="inline-flex items-center gap-1.5 border border-amber px-2 py-1 text-[10px] uppercase text-amber hover:bg-amber hover:text-background disabled:opacity-50">{triaging === record.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />} Run AI triage</button> : ai ? <div className="space-y-2 text-left"><p className="leading-relaxed text-foreground">{record.ai_reasoning}</p><p className="text-[10px] text-amber">Confidence: {record.ai_confidence != null ? `${Math.round(record.ai_confidence * 100)}%` : '—'}</p>{!record.human_approved && <label className="flex items-center justify-end gap-2 text-[10px] text-muted-foreground"><input type="checkbox" onChange={(event) => event.target.checked && onApprove?.(record)} className="accent-amber" /> Requires human approval</label>}</div> : <span className="inline-flex items-center gap-1 text-[10px] uppercase text-green"><ShieldCheck className="h-3.5 w-3.5" /> Rule matched</span>}{approving === record.id && <span className="ml-2 text-[10px] text-muted-foreground">Saving…</span>}</div></div>)}</div>{ai && <div className="flex items-center justify-end gap-2 border-t border-border pt-3"><Clock3 className="h-3.5 w-3.5 text-muted-foreground" /><input value={reviewer ?? ''} onChange={(event) => setReviewer?.(event.target.value)} placeholder="Reviewer name for approval" className="border-b border-border bg-transparent px-1 py-1 font-mono text-xs outline-none placeholder:text-muted-foreground focus:border-foreground" /></div>}</div> }
+function Table({ records, ai, triaging, onTriage, approving, onApprove, onReject }: { records: MatchResult[]; ai?: boolean; triaging?: string | null; onTriage?: (id: string) => void; approving?: string | null; onApprove?: (record: MatchResult) => void; onReject?: (record: MatchResult) => void }) { if (!records.length) return <div className="border-b border-border py-6 font-mono text-xs text-muted-foreground">No records in this section.</div>; return <div className="overflow-x-auto"><div className="min-w-[760px]"><div className="grid grid-cols-[1.2fr_1.2fr_0.7fr_0.8fr_1.5fr] gap-4 py-3 font-mono text-[10px] uppercase tracking-wider text-muted-foreground"><span>Payment ID</span><span>UTR</span><span>Status</span><span className="text-right">Amount</span><span className="text-right">Action / reasoning</span></div>{records.map((record) => <div key={record.id} className="grid grid-cols-[1.2fr_1.2fr_0.7fr_0.8fr_1.5fr] items-start gap-4 border-t border-border py-4 font-mono text-xs"><span className="truncate">{record.payment_id ?? '—'}</span><span className="truncate text-muted-foreground">{record.utr ?? '—'}</span><span className="text-muted-foreground">{record.status.replaceAll('_', ' ').toLowerCase()}</span><span className="text-right">{formatAmount(record.settled_paisa ?? record.expected_net_paisa, record.currency ?? 'INR')}</span><div className="text-right">{ai && !record.ai_reasoning ? <button onClick={() => onTriage?.(record.id)} disabled={triaging === record.id} className="inline-flex items-center gap-1.5 border border-amber px-2 py-1 text-[10px] uppercase text-amber hover:bg-amber hover:text-background disabled:opacity-50">{triaging === record.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />} Run AI triage</button> : ai ? <div className="space-y-2 text-left"><p className="leading-relaxed text-foreground">{record.ai_reasoning}</p><p className="text-[10px] text-amber">Confidence: {record.ai_confidence != null ? `${Math.round(record.ai_confidence * 100)}%` : '—'}</p><div className="flex items-center justify-end gap-3"><button onClick={() => onApprove?.(record)} disabled={approving === record.id} className="inline-flex items-center gap-1 border border-green px-2 py-1 text-[10px] uppercase text-green hover:bg-green hover:text-background disabled:opacity-50"><ShieldCheck className="h-3 w-3" /> Approve</button><button onClick={() => onReject?.(record)} disabled={approving === record.id} className="inline-flex items-center gap-1 border border-rust px-2 py-1 text-[10px] uppercase text-rust hover:bg-rust hover:text-background disabled:opacity-50"><CircleX className="h-3 w-3" /> Reject</button></div></div> : <span className="inline-flex items-center gap-1 text-[10px] uppercase text-green"><ShieldCheck className="h-3.5 w-3.5" /> Rule matched</span>}{approving === record.id && <span className="ml-2 text-[10px] text-muted-foreground">Saving…</span>}</div></div>)}</div></div> }
