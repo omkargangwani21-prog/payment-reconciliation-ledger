@@ -145,7 +145,10 @@ export function ReconciliationDashboard() {
 
   async function triage(id: string) {
     setTriaging(id); setError('')
-    try { const result = await callReconcile({ action: 'ai_triage', matchResultId: id }); setRecords((current) => current.map((r) => r.id === id ? { ...r, ai_reasoning: result.ai_reasoning, ai_confidence: result.ai_confidence } : r)) }
+    try {
+      await callReconcile({ action: 'ai_triage', matchResultId: id })
+      await loadRecords()
+    }
     catch (err) { setError(err instanceof Error ? err.message : 'Unable to run AI triage') }
     finally { setTriaging(null) }
   }
