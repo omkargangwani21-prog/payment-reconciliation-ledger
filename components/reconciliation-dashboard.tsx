@@ -112,7 +112,8 @@ export function ReconciliationDashboard() {
       if (missing.length) throw new Error(`${file.name} is missing columns: ${missing.join(', ')}`)
       if (!rows.length) throw new Error(`${file.name} contains no rows.`)
       const table = kind === 'ledger' ? 'internal_ledger' : 'settlements'
-      const { error: insertError } = await getSupabaseClient().from(table).insert(rows)
+      const conflictTarget = kind === 'ledger' ? 'payment_id' : 'utr'
+      const { error: insertError } = await getSupabaseClient().from(table).upsert(rows, { onConflict: conflictTarget })
       if (insertError) throw insertError
       uploadedKinds.current[kind] = true
       setUploads((current) => ({ ...current, [kind]: { file: file.name, loading: false, message: `${rows.length} ${kind === 'ledger' ? 'ledger' : 'settlement'} rows uploaded` } }))
