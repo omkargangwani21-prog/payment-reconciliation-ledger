@@ -1,17 +1,13 @@
 import { createClient } from '@supabase/supabase-js'
 
+const SUPABASE_URL = "https://oxeukllwezkudyqnsilq.supabase.co"
+const SUPABASE_ANON_KEY = "sb_publishable_Stq9Qj2PuKNVGqyBl4RYmQ_eFDeg-0Q"
+
 let client: ReturnType<typeof createClient> | undefined
 
 export function getSupabaseClient() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL
-  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
-
-  if (!url || !anonKey) {
-    throw new Error('Supabase connection is not configured. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY.')
-  }
-
   if (!client) {
-    client = createClient(url, anonKey)
+    client = createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
   }
 
   return client
