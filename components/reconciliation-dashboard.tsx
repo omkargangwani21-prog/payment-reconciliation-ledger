@@ -25,15 +25,9 @@ const uploadColumns: Record<UploadKind, string[]> = {
   settlement: ['utr', 'settlement_id', 'payment_id', 'settled_amount_paisa', 'settlement_date', 'batch_id'],
 }
 
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL
-const SUPABASE_ORIGIN = SUPABASE_URL ? new URL(SUPABASE_URL).origin : null
-const EDGE_FUNCTION_URL = SUPABASE_ORIGIN ? `${SUPABASE_ORIGIN}/functions/v1/reconcile` : null
-
-function requireSupabaseConfig() {
-  if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
-    throw new Error('Supabase connection is not configured. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY.')
-  }
-}
+const SUPABASE_URL = "https://oxeukllwezkudyqnsilq.supabase.co"
+const SUPABASE_ANON_KEY = "sb_publishable_Stq9Qj2PuKNVGqyBl4RYmQ_eFDeg-0Q"
+const EDGE_FUNCTION_URL = `${SUPABASE_URL}/functions/v1/reconcile`
 
 function formatAmount(value: MatchResult['amount'], currency = 'INR') {
   const number = typeof value === 'string' ? Number(value) : value ?? 0
@@ -45,16 +39,12 @@ function isAuto(status: string) { return status === 'AUTO_RECONCILED_EXACT' || s
 function isException(status: string) { return status.startsWith('EXCEPTION_') }
 
 async function callReconcile(body: Record<string, unknown>) {
-  requireSupabaseConfig()
-  if (!EDGE_FUNCTION_URL) throw new Error('Supabase URL is not configured.')
-
-  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
   const response = await fetch(EDGE_FUNCTION_URL, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      apikey: anonKey,
-      Authorization: `Bearer ${anonKey}`,
+      apikey: SUPABASE_ANON_KEY,
+      Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
     },
     body: JSON.stringify(body),
   })
@@ -77,7 +67,6 @@ export function ReconciliationDashboard() {
   const [open, setOpen] = useState({ auto: true, ai: true, exceptions: true })
 
   const loadRecords = useCallback(async () => {
-    requireSupabaseConfig()
     const supabase = getSupabaseClient()
     const { data, error: queryError } = await supabase.from('match_results').select('*')
     if (queryError) throw queryError
@@ -122,7 +111,6 @@ export function ReconciliationDashboard() {
       const missing = expected.filter((column) => !result.meta.fields?.includes(column))
       if (missing.length) throw new Error(`${file.name} is missing columns: ${missing.join(', ')}`)
       if (!rows.length) throw new Error(`${file.name} contains no rows.`)
-      requireSupabaseConfig()
       const table = kind === 'ledger' ? 'internal_ledger' : 'settlements'
       const { error: insertError } = await getSupabaseClient().from(table).insert(rows)
       if (insertError) throw insertError
