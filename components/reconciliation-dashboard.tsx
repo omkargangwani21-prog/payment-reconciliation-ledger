@@ -58,6 +58,7 @@ export function ReconciliationDashboard() {
   const [query, setQuery] = useState('')
   const [loading, setLoading] = useState(true)
   const [rerunning, setRerunning] = useState(false)
+  const [clearing, setClearing] = useState(false)
   const [error, setError] = useState('')
   const [triaging, setTriaging] = useState<string | null>(null)
   const [approving, setApproving] = useState<string | null>(null)
@@ -83,6 +84,20 @@ export function ReconciliationDashboard() {
     catch (err) { setError(err instanceof Error ? err.message : 'Unable to refresh reconciliation') }
     finally { setRerunning(false); setLoading(false) }
   }, [loadRecords])
+
+  const clearAllData = useCallback(async () => {
+    if (!window.confirm('This will permanently delete all ledger, settlement, and match records. This cannot be undone. Continue?')) return
+    setClearing(true); setError('')
+    try {
+      await callReconcile({ action: 'clear_all', approvedBy: reviewer.trim() || 'unknown' })
+      await loadRecords()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to clear reconciliation data')
+    } finally {
+      setClearing(false)
+      setLoading(false)
+    }
+  }, [loadRecords, reviewer])
 
   useEffect(() => {
     setToday(new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }).toUpperCase())
@@ -147,7 +162,7 @@ export function ReconciliationDashboard() {
     <header className="border-b border-border">
       <div className="mx-auto flex max-w-[1440px] items-center justify-between px-6 py-5 lg:px-10">
         <div className="flex items-center gap-3"><div className="flex h-8 w-8 items-center justify-center border border-foreground bg-foreground text-background font-mono text-xs font-bold">R/</div><div><p className="font-serif text-lg leading-none">Reconcile</p><p className="mt-1 font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground">Settlement register</p></div></div>
-        <div className="flex items-center gap-5"><span className="hidden font-mono text-[11px] text-muted-foreground sm:block">LIVE / {today ?? '—'}</span><button onClick={() => void runMatching()} disabled={rerunning} className="inline-flex items-center gap-2 border border-foreground px-3 py-2 font-mono text-[11px] uppercase tracking-wide transition-colors hover:bg-foreground hover:text-background disabled:opacity-50"><RefreshCw className={rerunning ? 'h-3.5 w-3.5 animate-spin' : 'h-3.5 w-3.5'} /> Re-run matching</button></div>
+        <div className="flex items-center gap-3"><span className="hidden font-mono text-[11px] text-muted-foreground sm:block">LIVE / {today ?? '—'}</span><button onClick={() => void runMatching()} disabled={rerunning || clearing} className="inline-flex items-center gap-2 border border-foreground px-3 py-2 font-mono text-[11px] uppercase tracking-wide transition-colors hover:bg-foreground hover:text-background disabled:opacity-50"><RefreshCw className={rerunning ? 'h-3.5 w-3.5 animate-spin' : 'h-3.5 w-3.5'} /> Re-run matching</button><button onClick={() => void clearAllData()} disabled={rerunning || clearing} className="inline-flex items-center gap-2 border border-rust px-3 py-2 font-mono text-[11px] uppercase tracking-wide text-rust transition-colors hover:bg-rust hover:text-background disabled:opacity-50">{clearing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CircleAlert className="h-3.5 w-3.5" />} Clear all data</button></div>
       </div>
     </header>
 
