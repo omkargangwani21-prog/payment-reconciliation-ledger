@@ -26,7 +26,8 @@ const uploadColumns: Record<UploadKind, string[]> = {
 }
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL
-const EDGE_FUNCTION_URL = SUPABASE_URL ? `${SUPABASE_URL.replace(/\/$/, '')}/functions/v1/reconcile` : null
+const SUPABASE_ORIGIN = SUPABASE_URL ? new URL(SUPABASE_URL).origin : null
+const EDGE_FUNCTION_URL = SUPABASE_ORIGIN ? `${SUPABASE_ORIGIN}/functions/v1/reconcile` : null
 
 function requireSupabaseConfig() {
   if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
@@ -85,7 +86,10 @@ export function ReconciliationDashboard() {
 
   const runMatching = useCallback(async () => {
     setRerunning(true); setError('')
-    try { await callReconcile({ action: 'run_matching' }); await loadRecords() }
+    try {
+      await callReconcile({ action: 'run_matching' })
+      await loadRecords()
+    }
     catch (err) { setError(err instanceof Error ? err.message : 'Unable to refresh reconciliation') }
     finally { setRerunning(false); setLoading(false) }
   }, [loadRecords])
