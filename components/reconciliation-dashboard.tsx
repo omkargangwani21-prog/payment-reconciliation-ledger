@@ -39,6 +39,20 @@ function formatAmount(value: number | string | null | undefined, currency = 'INR
 function isAuto(status: string) { return status === 'AUTO_RECONCILED_EXACT' || status === 'AUTO_RECONCILED_TOLERANCE' }
 function isException(status: string) { return status.startsWith('EXCEPTION_') }
 
+function amountValue(record: MatchResult) {
+  const raw = record.settled_paisa ?? record.expected_net_paisa ?? 0
+  const n = typeof raw === 'string' ? Number(raw) : raw
+  return Number.isFinite(n) ? Number(n) : 0
+}
+
+function byPaymentId(a: MatchResult, b: MatchResult) {
+  return String(a.payment_id ?? '').localeCompare(String(b.payment_id ?? ''))
+}
+
+function byAmountDescending(a: MatchResult, b: MatchResult) {
+  return amountValue(b) - amountValue(a)
+}
+
 async function callReconcile(body: Record<string, unknown>) {
   const response = await fetch(EDGE_FUNCTION_URL, {
     method: 'POST',
@@ -108,7 +122,11 @@ export function ReconciliationDashboard() {
     const value = query.toLowerCase()
     return String(record.payment_id ?? '').toLowerCase().includes(value) || String(record.utr ?? '').toLowerCase().includes(value)
   }), [records, query])
-  const groups = { auto: filtered.filter((r) => isAuto(r.status)), ai: filtered.filter((r) => r.status === 'AI_REVIEW_QUEUE'), exceptions: filtered.filter((r) => isException(r.status)) }
+  const groups = {
+    auto: filtered.filter((r) => isAuto(r.status)).slice().sort(byPaymentId),
+    ai: filtered.filter((r) => r.status === 'AI_REVIEW_QUEUE').slice().sort(byAmountDescending),
+    exceptions: filtered.filter((r) => isException(r.status)).slice().sort(byPaymentId),
+  }
   const autoCount = records.filter((r) => isAuto(r.status)).length
   const aiCount = records.filter((r) => r.status === 'AI_REVIEW_QUEUE').length
   const exceptionCount = records.filter((r) => isException(r.status)).length
