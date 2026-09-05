@@ -179,7 +179,7 @@ export function ReconciliationDashboard() {
   }
 
   async function approve(record: MatchResult) {
-    if (!reviewer.trim()) { setError('Enter a reviewer name before approving a record.'); return }
+    if (!reviewer.trim()) { alert('Please enter a reviewer name at the top of the AI Review Queue before approving or rejecting.'); return }
     setApproving(record.id); setError('')
     try {
       await callReconcile({ action: 'approve', matchResultId: record.id, approvedBy: reviewer.trim() })
@@ -190,7 +190,7 @@ export function ReconciliationDashboard() {
   }
 
   async function reject(record: MatchResult) {
-    if (!reviewer.trim()) { setError('Enter a reviewer name before rejecting a record.'); return }
+    if (!reviewer.trim()) { alert('Please enter a reviewer name at the top of the AI Review Queue before approving or rejecting.'); return }
     setApproving(record.id); setError('')
     try {
       await callReconcile({ action: 'reject', matchResultId: record.id, approvedBy: reviewer.trim() })
