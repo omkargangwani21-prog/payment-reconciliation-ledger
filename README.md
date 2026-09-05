@@ -40,6 +40,25 @@ Layer 4 → Missing / duplicate / orphan record → EXCEPTION_* (deterministic, 
 5. **Human decision:** Each AI-triaged record requires a named reviewer to explicitly **Approve** (moves to Auto-Reconciled) or **Reject** (moves to Exceptions as `EXCEPTION_AI_REJECTED`) — enforced at the schema level.
 6. **Reporting:** The dashboard renders a live audit register — match rate, per-status counts, and every record with its resolution path.
 
+## Repository Structure
+app/ # Next.js app router pages
+components/
+reconciliation-dashboard.tsx # Main frontend component - upload, matching, triage, approve/reject
+lib/
+supabase/client.ts # Supabase client initialization
+supabase/
+functions/reconcile/index.ts # Edge Function - full matching engine, AI triage, approve/reject/clear_all logic
+schema.sql # Database schema, grants, and RLS policies
+README.md
+
+## Local Setup
+
+1. Clone the repo: `git clone https://github.com/omkargangwani21-prog/payment-reconciliation-ledger`
+2. Install dependencies: `pnpm install`
+3. Supabase URL and publishable (anon) key are hardcoded in `lib/supabase/client.ts` for this demo — both are safe-to-expose values by design, protected by Row Level Security rather than secrecy (see Design Decisions below)
+4. To run against your own Supabase project instead: create a new project, run `supabase/schema.sql` in the SQL Editor, deploy `supabase/functions/reconcile/index.ts` as an Edge Function, add your `GROQ_API_KEY` as an Edge Function secret, then update the constants in `lib/supabase/client.ts`
+5. Run locally: `pnpm dev`
+
 ## Metrics
 
 On an 80–125 record test batch: **~71–82% match rate**, with the remainder split between AI review and exceptions, each with a specific, visible reason. The exception list is never hidden — every unresolved record is shown with its root cause, because a system that only demonstrates its clean cases proves nothing about production readiness.
@@ -52,6 +71,7 @@ On an 80–125 record test batch: **~71–82% match rate**, with the remainder s
 - **Tight tolerance (±2 paisa)**, chosen deliberately strict rather than loose, so real discrepancies are never silently absorbed.
 - **Cumulative data via upsert**, not wiped on each upload — mirrors real merchant usage where daily exports overlap. A manual "Clear All Data" action exists as an explicit reset.
 - **Open RLS policies** (single-tenant demo scope) — in production, every table would include a `merchant_id` column with RLS scoped to `auth.uid() = merchant_id`, restricting each merchant to their own data. The schema is structured to support this without redesign.
+- **No automated test suite** — given the buildathon time window, correctness was verified through direct database queries and live end-to-end testing rather than a written test suite. A documented tradeoff, not an oversight.
 
 ## Issues Faced & How They Were Solved
 
